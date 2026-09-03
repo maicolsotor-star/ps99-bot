@@ -1,17 +1,19 @@
 import requests
 import json
 import os
+import time
+import threading
+from flask import Flask
 import google.generativeai as genai
 
-# Configuración desde variables del entorno
+# Crear app básica de Flask para Render (Plan Gratuito)
+app = Flask(__name__)
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-
-# API pública de Pet Simulator 99
 PS99_API_URL = "https://ps99.biggamesapi.io/api/collection/pets"
 
 def enviar_alerta_discord(mensaje):
-    """Envía un mensaje a tu canal de Discord."""
     payload = {"content": mensaje}
     try:
         requests.post(DISCORD_WEBHOOK_URL, json=payload)
@@ -19,7 +21,6 @@ def enviar_alerta_discord(mensaje):
         print(f"Error enviando a Discord: {e}")
 
 def obtener_datos_mercado():
-    """Descarga los datos completos de mascotas de PS99."""
     try:
         response = requests.get(PS99_API_URL)
         if response.status_code == 200:
@@ -29,8 +30,6 @@ def obtener_datos_mercado():
     return []
 
 def analizar_con_ia(datos_mercado):
-    """Filtra y envía el mercado completo a Gemini para encontrar ofertas."""
-    # Filtramos mascotas relevantes (con RAP y Existencias registradas) para no sobrecargar
     mascotas_interesantes = []
     for item in datos_mercado:
         rap = item.get("rap", 0)
@@ -38,7 +37,6 @@ def analizar_con_ia(datos_mercado):
         name = item.get("configName", "Desconocido")
         category = item.get("category", "")
         
-        # Consideramos únicamente mascotas con cierto valor
         if rap > 10_000_000:
             mascotas_interesantes.append({
                 "nombre": name,
@@ -47,11 +45,9 @@ def analizar_con_ia(datos_mercado):
                 "existencias": exists
             })
     
-    # Si no hay datos suficientes
     if not mascotas_interesantes:
-        return "No se encontraron mascotas con valor alto registrado en este momento."
+        return "No se encontraron mascotas relevantes en este momento."
 
-    # Configurar la API de Gemini
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel('gemini-1.5-flash')
 
@@ -73,15 +69,29 @@ def analizar_con_ia(datos_mercado):
     except Exception as e:
         return f"Error procesando con Gemini: {e}"
 
-def ejecucion_principal():
-    print("Iniciando escaneo del mercado PS99...")
-    datos = obtener_datos_mercado()
-    if datos:
-        analisis = analizar_con_ia(datos)
-        enviar_alerta_discord(f"📊 **Informe de Mercado PS99 - Analista IA**\n\n{analisis}")
-        print("Informe enviado a Discord con éxito.")
-    else:
-        print("No se pudieron obtener datos del mercado.")
+def bucle_analisis():
+    """Se ejecuta solo cada 2 horas en segundo plano."""
+    while True:
+        print("Iniciando escaneo del mercado PS99...")
+        datos = obtener_datos_mercado()
+        if datos:
+            analisis = analizar_con_ia(datos)
+            enviar_alerta_discord(f"📊 **Informe de Mercado PS99 - Analista IA**\n\n{analisis}")
+            print("Informe enviado a Discord.")
+        else:
+            print("No se pudieron obtener datos.")
+        
+        # Esperar 2 horas (7200 segundos) antes de volver a analizar
+        time.sleep(7200)
+
+# Iniciar el hilo del bot de PS99
+hilo = threading.Thread(target=bucle_analisis, daemon=True)
+hilo.start()
+
+@app.route('/')
+def home():
+    return "El Bot Analista de PS99 está funcionando 24/7 de forma gratuita."
 
 if __name__ == "__main__":
-    ejecucion_principal()
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
