@@ -1,24 +1,22 @@
 import requests
 import json
 import os
-import time
-import threading
-from flask import Flask
+import discord
+from discord.ext import commands
 import google.generativeai as genai
 
-# Crear app básica de Flask para Render (Plan Gratuito)
-app = Flask(__name__)
-
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 PS99_API_URL = "https://ps99.biggamesapi.io/api/collection/pets"
 
-def enviar_alerta_discord(mensaje):
-    payload = {"content": mensaje}
-    try:
-        requests.post(DISCORD_WEBHOOK_URL, json=payload)
-    except Exception as e:
-        print(f"Error enviando a Discord: {e}")
+# Configurar Gemini
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
+
+# Configurar Bot de Discord
+intents = discord.Intents.default()
+intents.message_content = True
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 def obtener_datos_mercado():
     try:
@@ -29,69 +27,45 @@ def obtener_datos_mercado():
         print(f"Error obteniendo mercado: {e}")
     return []
 
-def analizar_con_ia(datos_mercado):
-    mascotas_interesantes = []
-    for item in datos_mercado:
+@bot.event
+async def on_ready():
+    print(f'¡Bot conectado como {bot.user}!')
+
+@bot.command(name="analizar")
+async def analizar(ctx, *, consulta: str = None):
+    """Comando: !analizar <pregunta u opción>"""
+    await ctx.send("🔍 Escaneando el mercado de PS99 y consultando a la IA...")
+    
+    datos = obtener_datos_mercado()
+    if not datos:
+        await ctx.send("❌ No se pudieron obtener los datos de la API de PS99.")
+        return
+
+    # Filtrar datos de mascotas
+    mascotas = []
+    for item in datos:
         rap = item.get("rap", 0)
         exists = item.get("exists", 0)
         name = item.get("configName", "Desconocido")
-        category = item.get("category", "")
-        
-        if rap > 500_000:
-            mascotas_interesantes.append({
-                "nombre": name,
-                "categoria": category,
-                "rap": rap,
-                "existencias": exists
-            })
-    
-    if not mascotas_interesantes:
-        return "No se encontraron mascotas relevantes en este momento."
+        if rap > 100_000:
+            mascotas.append({"nombre": name, "rap": rap, "existencias": exists})
 
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-
-    prompt = f"""
-    Eres un analista experto en la economía y trading de Pet Simulator 99 en Roblox.
-    Analiza la lista de mascotas con su precio promedio reciente (RAP) y existencias totales en el juego:
-
-    {json.dumps(mascotas_interesantes[:100], indent=2)}
-
-    Tu objetivo:
-    1. Identifica las 2 o 3 mejores oportunidades de compra/inversión (mascotas raras o con pocas existencias pero valor RAP atractivo).
-    2. Da una breve recomendación de compra y precio de venta objetivo.
-    3. Responde de forma muy concisa, clara y amigable en español con emoticones para Discord.
+    prompt_base = f"""
+    Eres un analista experto en la economía de Pet Simulator 99 en Roblox.
+    Datos del mercado actual:
+    {json.dumps(mascotas[:150], indent=2)}
     """
+
+    if consulta:
+        prompt = f"{prompt_base}\n\nEl usuario pregunta específicamente: '{consulta}'. Responde basándote en los datos con consejos prácticos de trading."
+    else:
+        prompt = f"{prompt_base}\n\nDame un resumen general del mercado: las 3 mejores oportunidades de compra y qué vender hoy."
 
     try:
         respuesta = model.generate_content(prompt)
-        return respuesta.text
+        await ctx.send(f"📊 **Análisis del Mercado PS99**\n\n{respuesta.text[:1900]}")
     except Exception as e:
-        return f"Error procesando con Gemini: {e}"
-
-def bucle_analisis():
-    """Se ejecuta solo cada 2 horas en segundo plano."""
-    while True:
-        print("Iniciando escaneo del mercado PS99...")
-        datos = obtener_datos_mercado()
-        if datos:
-            analisis = analizar_con_ia(datos)
-            enviar_alerta_discord(f"📊 **Informe de Mercado PS99 - Analista IA**\n\n{analisis}")
-            print("Informe enviado a Discord.")
-        else:
-            print("No se pudieron obtener datos.")
-        
-        # Esperar 2 horas (7200 segundos) antes de volver a analizar
-        time.sleep(7200)
-
-# Iniciar el hilo del bot de PS99
-hilo = threading.Thread(target=bucle_analisis, daemon=True)
-hilo.start()
-
-@app.route('/')
-def home():
-    return "El Bot Analista de PS99 está funcionando 24/7 de forma gratuita."
+        await ctx.send(f"❌ Error al consultar la IA: {e}")
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    bot.run(DISCORD_BOT_TOKEN)
