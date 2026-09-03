@@ -37,7 +37,7 @@ def analizar_con_ia(datos_mercado):
         name = item.get("configName", "Desconocido")
         category = item.get("category", "")
         
-        if rap > 10_000_000:
+        if rap > 500_000:
             mascotas_interesantes.append({
                 "nombre": name,
                 "categoria": category,
