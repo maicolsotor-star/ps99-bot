@@ -1,19 +1,35 @@
 import requests
 import json
 import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from discord.ext import commands
 import google.generativeai as genai
 
+# 1. Servidor web liviano en segundo plano para engañar a Render
+class DummyServer(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot activo")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), DummyServer)
+    server.serve_forever()
+
+# Iniciar servidor web en un hilo secundario
+threading.Thread(target=run_dummy_server, daemon=True).start()
+
+# 2. Configuración de Gemini y Discord
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 PS99_API_URL = "https://ps99.biggamesapi.io/api/collection/pets"
 
-# Configurar Gemini
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-# Configurar Bot de Discord
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -33,7 +49,6 @@ async def on_ready():
 
 @bot.command(name="analizar")
 async def analizar(ctx, *, consulta: str = None):
-    """Comando: !analizar <pregunta u opción>"""
     await ctx.send("🔍 Escaneando el mercado de PS99 y consultando a la IA...")
     
     datos = obtener_datos_mercado()
@@ -41,7 +56,6 @@ async def analizar(ctx, *, consulta: str = None):
         await ctx.send("❌ No se pudieron obtener los datos de la API de PS99.")
         return
 
-    # Filtrar datos de mascotas
     mascotas = []
     for item in datos:
         rap = item.get("rap", 0)
